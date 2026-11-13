@@ -26,7 +26,10 @@ pub fn register(lingers: bool, cx: &mut App) {
         }
         let close_to_tray = Sonora::global(cx).settings.read(cx).close_to_tray();
         match lingers && close_to_tray {
-            true => crate::dock::show(false),
+            true => {
+                crate::dock::show(false);
+                crate::memory::trim(cx);
+            }
             false => cx.quit(),
         }
     })

@@ -21,6 +21,52 @@ pub fn tune() {
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 pub fn tune() {}
 
+/// Trims the process working set after the window finishes closing to the tray so pages no longer
+/// needed for UI rendering can be reclaimed by Windows.
+#[cfg(target_os = "windows")]
+pub fn trim(cx: &mut App) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    const TRIM_DELAY: Duration = Duration::from_secs(2);
+    static TRIM_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+    let generation = TRIM_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(TRIM_DELAY).await;
+        let still_hidden = TRIM_GENERATION.load(Ordering::Relaxed) == generation
+            && cx.update(|cx| cx.windows().is_empty());
+        if still_hidden {
+            cx.background_executor()
+                .spawn(async { trim_working_set() })
+                .await;
+        }
+    })
+    .detach();
+}
+
+#[cfg(target_os = "windows")]
+fn trim_working_set() {
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
+
+    // SAFETY: `GetCurrentProcess` returns the current process pseudo-handle and passing `usize::MAX`
+    // (`(SIZE_T)-1`) for both limits asks Windows to trim the working set.
+    let trimmed = unsafe {
+        let process = GetCurrentProcess();
+        SetProcessWorkingSetSize(process, usize::MAX, usize::MAX)
+    };
+    if trimmed == 0 {
+        log::warn!(
+            "memory: cannot trim the working set: {}",
+            std::io::Error::last_os_error()
+        );
+    } else {
+        log::debug!("memory: trimmed the working set");
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn trim(_cx: &mut App) {}
+
 /// Logs the memory footprint every `INTERVAL` while debug logging is on, and does nothing
 /// otherwise.
 pub fn watch(cx: &mut App) {
