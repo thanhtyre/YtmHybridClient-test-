@@ -1,0 +1,65 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_RELEASE_STRIP: symbols
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-windows:
+    name: Build Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-x64
+          cache-on-failure: true
+
+      - name: Check formatting
+        run: cargo fmt --package ytm-hybrid -- --check
+
+      - name: Clippy
+        run: cargo clippy --package ytm-hybrid --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --package ytm-hybrid --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked --package ytm-hybrid
+
+      - name: Package Windows artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -Path "target\release\ytm-hybrid.exe" -Destination "dist\" -Force
+          Copy-Item -Path "LICENSE" -Destination "dist\" -Force
+          $hash = (Get-FileHash "dist\ytm-hybrid.exe" -Algorithm SHA256).Hash.ToLower()
+          "$hash ytm-hybrid.exe" | Out-File -FilePath "dist\SHA256SUMS-windows.txt" -Encoding ascii
+          Compress-Archive -Path "dist\ytm-hybrid.exe", "dist\LICENSE", "dist\SHA256SUMS-windows.txt" -DestinationPath "dist\ytm-hybrid-windows-x64.zip" -Force
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ytm-hybrid-windows-x64
+          path: |
+            dist/ytm-hybrid.exe
+            dist/ytm-hybrid-windows-x64.zip
+            dist/SHA256SUMS-windows.txt
